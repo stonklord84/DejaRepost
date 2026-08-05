@@ -1,0 +1,34 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "dejapost",
+  "post": {
+    "entrypoints": {
+      "default": {
+        "entry": "splash.html"
+      },
+      "game": {
+        "entry": "game.html"
+      }
+    }
+  },
+  "server": {},
+  "menu": {
+    "items": [
+      {
+        "label": "[dejapost] New Post",
+        "description": "Create a new dejapost post.",
+        "location": "subreddit",
+        "endpoint": "/internal/on/menu/new-post"
+      }
+    ]
+  },
+  "triggers": {
+    "onPostSubmit": "/internal/on-post-submit"
+  },
+  "scripts": {
+    "dev": "npm run watch"
+  },
+  "dev": {
+    "subreddit": "dejapost_dev"
+  }
+}
