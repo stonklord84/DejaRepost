@@ -7,7 +7,7 @@
   "scripts": {
     "build": "npm run build:client -- --metafile=dist/client.meta.json --minify && npm run build:server -- --metafile=dist/server.meta.json --minify",
     "build:client": "esbuild --bundle --log-level=warning --sourcemap=linked --target=es2023 --format=esm --outdir=public --platform=browser src/client/splash.ts src/client/game.ts",
-    "build:server": "esbuild --bundle --log-level=warning --sourcemap=linked --target=es2023 --format=cjs --outdir=dist/server --platform=node src/server/index.ts",
+    "build:server": "esbuild --bundle --log-level=warning --sourcemap=linked --target=es2023 --format=cjs --outdir=dist/server --platform=node --loader:.wasm=dataurl src/server/index.ts",
     "clean": "rm -rf dist/ public/*.js*",
     "format": "npm run lint -- --fix",
     "lint": "biome check --error-on-warnings",
@@ -16,17 +16,21 @@
     "test:types": "tsc --build",
     "test:unit": "node --experimental-strip-types --no-warnings=ExperimentalWarning --test src/**/*.test.ts",
     "publish": "npm run clean && npm run build && devvit publish",
-    "watch": "sh -c 'trap \"kill 0\" exit; npm run build:client -- --watch=forever& npm run build:server -- --watch=forever& wait' --"
+    "watch": "concurrently -k \"npm run build:client -- --watch=forever\" \"npm run build:server -- --watch=forever\""
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
     "@devvit/web": "0.13.11",
     "@types/node": "22.20.1",
+    "concurrently": "^10.0.4",
     "devvit": "0.13.11",
     "esbuild": "0.28.1",
     "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=22.20.0"
+  },
+  "dependencies": {
+    "@ffmpeg/core": "^0.12.10"
   }
 }

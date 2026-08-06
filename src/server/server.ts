@@ -16,6 +16,12 @@ import {
 } from '../shared/api.ts'
 import {dbGetCounter, dbIncCounter} from './db.ts'
 
+import {extractFrames} from './decodeFrames.ts'
+
+import { read } from 'node:fs'
+//import { count } from 'node:console'
+//import { postMessageToThread } from 'node:worker_threads'
+
 type AnyRsp =
   | GetCounterRsp
   | IncCounterRsp
@@ -58,7 +64,7 @@ async function route(
         rsp = await routeMenuNewPost()
         break
       case Endpoint.OnPostSubmit:
-        rsp = await newPostSubmitted()
+        rsp = await newPostSubmitted(reqMsg)
         break
       default:
         endpoint satisfies never
@@ -69,8 +75,78 @@ async function route(
 
   writeJson<PartialJsonValue>('status' in rsp ? rsp.status : 200, rsp, rspMsg)
 }
-async function newPostSubmitted(){
+async function newPostSubmitted(reqMsg: IncomingMessage){
   console.log('New Post Submitted')
+  async function delayTime(ms: number){
+    return new Promise((resolve)=>{
+      setTimeout(resolve, ms)
+    })
+  }
+  const sub = context.subredditName
+  const req = await readJson(reqMsg)
+  console.log('this is req: ', req)
+  console.log('--------------------------------')
+  const postId = (req as any).post?.id
+  let postMetaInfo = await reddit.getPostById(postId)
+  let tries = 3
+  let countDown = 3
+  if (!postMetaInfo){
+    console.log('secureMedia is not loaded, waiting for 3 seconds...')
+  }
+  while (!postMetaInfo.secureMedia && tries > 0){
+    console.log(String(countDown) + '...')
+    await delayTime(1000)
+    countDown -= 1;
+    if (countDown == 0){
+      tries -= 1
+      countDown = 3
+      postMetaInfo = await reddit.getPostById(postId)
+      console.log('SecureMedia still not loaded! restarting timer...')
+    }
+  }
+  console.log(postMetaInfo.secureMedia ?? 'unfortunately, secureMedia did not load!')
+  // const fallBackUrl = postMetaInfo.secureMedia?.redditVideo?.fallbackUrl
+  // console.log(fallBackUrl, 'this is the fallbackurl')
+
+  const posts = await reddit.getNewPosts({
+    subredditName: sub,
+    limit: 2,
+    pageSize: 100
+  }).all();
+  let fallBackUrls: string[] = []
+  console.log('this should be 2: ', posts.length)
+  for (const post of posts){
+    console.log(post.title)
+    let currPostId = post.id
+    let currPostMetaInfo = await reddit.getPostById(currPostId)
+    let currFallBackUrl = currPostMetaInfo.secureMedia?.redditVideo?.fallbackUrl
+    if (typeof currFallBackUrl === 'string'){
+      fallBackUrls.push(currFallBackUrl)
+    }
+  }
+  console.log('this is the fallbackurls: ', fallBackUrls, ' <- right here')
+  for (const url of fallBackUrls) {
+    try {
+      const res = await fetch(url)
+      const buf = new Uint8Array(await res.arrayBuffer())
+      console.log(`fetched ${url} -> status ${res.status}, ${buf.byteLength} bytes`)
+
+      // const frames = await extractFrames(buf, 1)
+      // console.log(
+      //   `decoded ${frames.length} frame(s) from ${url}:`,
+      //   frames.map(f => f.byteLength),
+      // )
+    } catch (err) {
+      console.log(`pipeline FAILED for ${url}:`, err instanceof Error ? err.stack : err)
+    }
+  }
+  // for (const post of posts){
+  //   const thumbnail = await post.thumbnail?.url
+  //   if(thumbnail){
+  //     console.log('hey, this post has a thumbnail!(forgot to print this damn thing last time)', thumbnail)
+  //     console.log('also, this is the post title: ', post.title)
+  //   }
+  // }
   return {res: 'this is a new post'}
 }
 async function routeGetCounter(): Promise<GetCounterRsp> {

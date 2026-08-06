@@ -12,6 +12,12 @@
     }
   },
   "server": {},
+  "permissions": {
+    "http": {
+      "enable": true,
+      "domains": ["v.redd.it"]
+    }
+  },
   "menu": {
     "items": [
       {
