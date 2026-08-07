@@ -15,7 +15,7 @@
   "permissions": {
     "http": {
       "enable": true,
-      "domains": ["v.redd.it"]
+      "domains": ["v.redd.it", "qtyvytpodaznfhffdzus.supabase.co"]
     }
   },
   "menu": {

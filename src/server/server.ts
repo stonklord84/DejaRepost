@@ -131,11 +131,11 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
       const buf = new Uint8Array(await res.arrayBuffer())
       console.log(`fetched ${url} -> status ${res.status}, ${buf.byteLength} bytes`)
 
-      // const frames = await extractFrames(buf, 1)
-      // console.log(
-      //   `decoded ${frames.length} frame(s) from ${url}:`,
-      //   frames.map(f => f.byteLength),
-      // )
+      const frames = await extractFrames(buf, 1)
+      console.log(
+        `decoded ${frames.length} frame(s) from ${url}:`,
+        frames.map(f => f.byteLength),
+      )
     } catch (err) {
       console.log(`pipeline FAILED for ${url}:`, err instanceof Error ? err.stack : err)
     }

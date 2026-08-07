@@ -1,13 +1,19 @@
 import createFFmpegCore from '@ffmpeg/core'
-import wasmDataUrl from '@ffmpeg/core/wasm'
+
+// Hosted externally (Supabase Storage, public bucket) instead of bundled into
+// the server: embedding the ~32MB wasm binary directly in the server bundle
+// pushed it past whatever size/startup budget Devvit enforces, which broke
+// the entire server, not just video decoding. Fetching it at first use keeps
+// the deployed bundle small; the cost moves to a one-time ~32MB download on
+// the first video decode per warm server instance.
+const WASM_URL =
+  'https://qtyvytpodaznfhffdzus.supabase.co/storage/v1/object/public/ffmpeg-core.wasm/ffmpeg-core.wasm'
 
 let modulePromise: ReturnType<typeof createFFmpegCore> | null = null
 
-// Everything here is deliberately deferred until the first real call, not run
-// at module load: decoding the ~32MB wasm binary out of its base64 asset is
-// heavy synchronous work, and running it unconditionally on every server
-// cold start (rather than only when a video actually needs decoding) risked
-// blowing Devvit's startup budget for every endpoint, not just this one.
+// Deferred until the first real call, not run at module load, same reasoning
+// as before: don't pay this cost on every cold start, only when a video
+// actually needs decoding.
 function getModule() {
   if (!modulePromise) {
     // ffmpeg-core.wasm is built assuming it always runs inside a browser Web
@@ -20,13 +26,19 @@ function getModule() {
     g.self ??= globalThis
     g.location ??= {href: 'file:///dejapost-server/'}
 
-    console.log('[decodeFrames] decoding base64 wasm asset...')
-    const wasmBinary = Buffer.from(wasmDataUrl.split(',')[1] ?? '', 'base64')
-    console.log('[decodeFrames] wasm bytes ready:', wasmBinary.byteLength, '- instantiating module...')
-    modulePromise = createFFmpegCore({wasmBinary}).then(m => {
-      console.log('[decodeFrames] module instantiated OK')
-      return m
-    })
+    modulePromise = fetch(WASM_URL)
+      .then(res => {
+        console.log('[decodeFrames] wasm fetch status:', res.status)
+        return res.arrayBuffer()
+      })
+      .then(buf => {
+        console.log('[decodeFrames] wasm bytes fetched:', buf.byteLength, '- instantiating module...')
+        return createFFmpegCore({wasmBinary: new Uint8Array(buf)})
+      })
+      .then(m => {
+        console.log('[decodeFrames] module instantiated OK')
+        return m
+      })
   }
   return modulePromise
 }

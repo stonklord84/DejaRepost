@@ -15,8 +15,3 @@ declare module '@ffmpeg/core' {
     wasmBinary: Uint8Array
   }): Promise<FFmpegCoreModule>
 }
-
-declare module '@ffmpeg/core/wasm' {
-  const dataUrl: string
-  export default dataUrl
-}
