@@ -29,7 +29,15 @@
     ]
   },
   "triggers": {
-    "onPostSubmit": "/internal/on-post-submit"
+    "onPostSubmit": "/internal/on-post-submit",
+    "onAppInstall": "/internal/on-app-install"
+  },
+  "scheduler": {
+    "tasks": {
+      "seed-fingerprints": {
+        "endpoint": "/internal/scheduler/seed-fingerprints"
+      }
+    }
   },
   "scripts": {
     "dev": "npm run watch"

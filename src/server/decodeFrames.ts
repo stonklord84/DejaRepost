@@ -22,6 +22,8 @@ function getModule() {
     // href value itself is never read on this code path (we pass wasmBinary
     // directly below, so it never falls back to fetching/locating the wasm
     // file by URL).
+    // anyways, only one way to find out
+    // lets make 10 fingerprints, on app start
     const g = globalThis as {self?: unknown; location?: unknown}
     g.self ??= globalThis
     g.location ??= {href: 'file:///dejapost-server/'}
@@ -33,7 +35,11 @@ function getModule() {
       })
       .then(buf => {
         console.log('[decodeFrames] wasm bytes fetched:', buf.byteLength, '- instantiating module...')
-        return createFFmpegCore({wasmBinary: new Uint8Array(buf)})
+        return createFFmpegCore({
+          wasmBinary: new Uint8Array(buf),
+          print: (msg: string) => console.log('[ffmpeg]', msg),
+          printErr: (msg: string) => console.log('[ffmpeg:err]', msg),
+        })
       })
       .then(m => {
         console.log('[decodeFrames] module instantiated OK')
@@ -49,32 +55,38 @@ export async function extractFrames(
   fps = 1,
 ): Promise<Uint8Array[]> {
   console.log('[decodeFrames] extractFrames called, video bytes:', video.byteLength)
+  console.time('getFFmpeg')
   const mod = await getModule()
+  console.timeEnd('getFFmpeg')
   const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`
   const inFile = `in_${id}.mp4`
-  const outPrefix = `out_${id}_`
+  const outputFile = `out_${id}.bin`
 
   console.log('[decodeFrames] writing input to virtual fs...')
   mod.FS.writeFile(inFile, video)
   try {
-    console.log('[decodeFrames] running exec...')
-    const ret = mod.exec('-i', inFile, '-vf', `fps=${fps}`, `${outPrefix}%d.png`)
-    console.log('[decodeFrames] exec returned:', ret)
-    if (ret !== 0) throw Error(`ffmpeg exec failed with code ${ret}`)
+    const exitCode = mod.exec(
+      '-i', inFile,
+      '-t', '30',
+      '-vf', 'fps=1,scale=9:8:flags=lanczos,format=gray',
+      '-f', 'rawvideo',
+      '-pix_fmt', 'gray',
+      outputFile
+    )
 
-    const frameFiles = mod.FS.readdir('.')
-      .filter(f => f.startsWith(outPrefix))
-      .sort((a, b) => {
-        const na = Number(a.slice(outPrefix.length))
-        const nb = Number(b.slice(outPrefix.length))
-        return na - nb
-      })
+    if (exitCode != 0) throw new Error(`FFmpeg exec failed with code ${exitCode}`)
+    
+    //must read bin file before you can iterate through it
+    let framesFile = mod.FS.readFile(outputFile)
+    mod.FS.unlink(outputFile)
 
-    return frameFiles.map(f => {
-      const data = mod.FS.readFile(f)
-      mod.FS.unlink(f)
-      return data
-    })
+    const frameSize = 9 * 8
+    let chunks: Uint8Array[] = []
+    for (let i = 0; i < framesFile.length; i+= frameSize ){
+      chunks.push(framesFile.subarray(i, i + frameSize))
+    }
+    return chunks
+
   } finally {
     mod.FS.unlink(inFile)
   }

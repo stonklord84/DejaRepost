@@ -13,7 +13,9 @@ export const Endpoint = {
   GetCounter: 'api/counter',
   IncCounter: 'api/counter/inc',
   OnMenuNewPost: 'internal/on/menu/new-post',
-  OnPostSubmit: 'internal/on-post-submit'
+  OnPostSubmit: 'internal/on-post-submit',
+  OnAppInstall: 'internal/on-app-install',
+  SeedFingerprints: 'internal/scheduler/seed-fingerprints'
   
 } as const
 
@@ -22,4 +24,6 @@ export const EndpointMethod = {
   [Endpoint.IncCounter]: 'POST',
   [Endpoint.OnMenuNewPost]: 'POST',
   [Endpoint.OnPostSubmit]: 'POST',
+  [Endpoint.OnAppInstall]: 'POST',
+  [Endpoint.SeedFingerprints]: 'POST'
 } as const satisfies {[endpoint: string]: 'GET' | 'POST'}

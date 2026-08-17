@@ -13,5 +13,7 @@ declare module '@ffmpeg/core' {
 
   export default function createFFmpegCore(opts: {
     wasmBinary: Uint8Array
+    print?: (msg: string) => void
+    printErr?: (msg: string) => void
   }): Promise<FFmpegCoreModule>
 }

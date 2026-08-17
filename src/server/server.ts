@@ -1,6 +1,7 @@
 import {once} from 'node:events'
 import type {IncomingMessage, ServerResponse} from 'node:http'
-import {context, reddit} from '@devvit/web/server'
+import {context, reddit, redis, scheduler} from '@devvit/web/server'
+import { compareVideoHashes, dHash } from './compare.ts'
 import type {
   PartialJsonValue,
   TriggerResponse,
@@ -17,10 +18,8 @@ import {
 import {dbGetCounter, dbIncCounter} from './db.ts'
 
 import {extractFrames} from './decodeFrames.ts'
-
-import { read } from 'node:fs'
-//import { count } from 'node:console'
-//import { postMessageToThread } from 'node:worker_threads'
+import { compareVideo } from './compare.ts'
+import { getDefaultHighWaterMark } from 'node:stream'
 
 type AnyRsp =
   | GetCounterRsp
@@ -66,6 +65,12 @@ async function route(
       case Endpoint.OnPostSubmit:
         rsp = await newPostSubmitted(reqMsg)
         break
+      case Endpoint.OnAppInstall:
+        rsp = await appInstalled(reqMsg)
+        break
+      case Endpoint.SeedFingerprints:
+        rsp = await seedFingerprints(reqMsg)
+        break
       default:
         endpoint satisfies never
         rsp = {error: 'not found', status: 404}
@@ -75,6 +80,52 @@ async function route(
 
   writeJson<PartialJsonValue>('status' in rsp ? rsp.status : 200, rsp, rspMsg)
 }
+
+async function seedFingerprints(reqMsg: IncomingMessage){
+  console.log('hi, did we even get to this point?')
+  const req = await readJson(reqMsg)
+  console.log(req, 'this is req, read it!')
+  const newPosts = await reddit.getNewPosts({
+    limit: 10,
+    subredditName: (req as any).data?.subredditName,
+    pageSize: 100
+  }).all()
+  let posts_and_urls: any = {}
+  for (const post of newPosts){
+    if (post.secureMedia){
+      if (!posts_and_urls[post.title]){
+        posts_and_urls[post.title] = [post.secureMedia.redditVideo?.fallbackUrl, post.id]
+      }
+    }
+  }
+  for (const title of Object.keys(posts_and_urls)){
+    let video: Uint8Array[] = []
+    const res = await fetch(posts_and_urls[title][0])
+    const buf = await res.arrayBuffer()
+    video = await extractFrames(new Uint8Array(buf))
+    //im thinking maybe ill store the video inside redis
+    console.log(title, video.length, '<= video length')
+    //yeah ill store the video variable, with key postid!
+    //nah, lets fingerprint them all... yeah.
+    for (const [i, frame] of video.entries()){
+      await redis.hSet(posts_and_urls[title][1], {[String(i)]: dHash(frame).toString()})
+    }
+  }
+  console.log(posts_and_urls, 'this is the posts_and_urls dictionary')
+  return {'seed': 'seed'}
+}
+
+async function appInstalled(reqMsg: IncomingMessage){
+  const req = await readJson(reqMsg)
+  console.log('app installed bozo')
+  await scheduler.runJob({
+    name: 'seed-fingerprints',
+    data: {subredditName: (req as any).subreddit?.name},
+    runAt: new Date(),
+  })
+  return {'test': 'test'}
+}
+
 async function newPostSubmitted(reqMsg: IncomingMessage){
   console.log('New Post Submitted')
   async function delayTime(ms: number){
@@ -87,6 +138,7 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
   console.log('this is req: ', req)
   console.log('--------------------------------')
   const postId = (req as any).post?.id
+  console.log()
   let postMetaInfo = await reddit.getPostById(postId)
   let tries = 3
   let countDown = 3
@@ -104,49 +156,55 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
       console.log('SecureMedia still not loaded! restarting timer...')
     }
   }
-  console.log(postMetaInfo.secureMedia ?? 'unfortunately, secureMedia did not load!')
-  // const fallBackUrl = postMetaInfo.secureMedia?.redditVideo?.fallbackUrl
-  // console.log(fallBackUrl, 'this is the fallbackurl')
-
-  const posts = await reddit.getNewPosts({
+  //ok, so we got postMetainfo.secureMedia now
+  //now get its hash
+  const fallbackUrl = postMetaInfo.secureMedia?.redditVideo?.fallbackUrl
+  const res = await fetch(fallbackUrl as string)
+  const buffer = await res.arrayBuffer()
+  let video: Uint8Array[] = []
+  video = await extractFrames(new Uint8Array(buffer))
+  // multiple hashes. ok, video is a list of Uint8Array, a list of frames basically
+  // you can loop through video to get a list of hashes, ig. since that's what you have stored in uh... redis. 
+  // redis.... should be in order! hopefully. well lets see, you did for ([i, frame] in video.entries()) and yeah that should be in order
+  // so do the compare function, except instead of taking in 2 Uint8Array[] objects, ur taking in 2 bigint[] objects. or rather, 2 string[]
+  // objects if you decide to not convert redis. lets decide this now. I will simply convert redis into bigint first cuz why do it back and forth
+  // so next step is to get an array of video hashes
+  let curr_video_hashes: bigint[] = []
+  for (const frame of video){
+    curr_video_hashes.push(dHash(frame))
+  }
+  //now, compare. before that, we must figure out yk getting out the hashes from our redis
+  //now... i think you should still run a quick yk get 10 most recent posts, we could start with 5 tho
+  //we know in redis, our hasehs are stored with keys
+  const recent_post_ids: string[] = []
+  let new_posts = await reddit.getNewPosts({
     subredditName: sub,
-    limit: 2,
-    pageSize: 100
-  }).all();
-  let fallBackUrls: string[] = []
-  console.log('this should be 2: ', posts.length)
-  for (const post of posts){
-    console.log(post.title)
-    let currPostId = post.id
-    let currPostMetaInfo = await reddit.getPostById(currPostId)
-    let currFallBackUrl = currPostMetaInfo.secureMedia?.redditVideo?.fallbackUrl
-    if (typeof currFallBackUrl === 'string'){
-      fallBackUrls.push(currFallBackUrl)
-    }
+    limit: 5,
+    pageSize: 20
+  }).all()
+  let temp_repost_dict: Record<string, number> = {}
+  for (const post of new_posts){
+    console.log(post.title, post.id)
+    recent_post_ids.push(post.id)
+    let redis_past_video_hashes = await redis.hGetAll(post.id.toString())
+    //ok, you have all the past video hashes of a specific post, time to convert them into bigint
+    let past_video_hashes: bigint[] = []
+    Object.values(redis_past_video_hashes).forEach((h)=> past_video_hashes.push(BigInt(h)))
+    //ok, now you have an array of both pastvideo hashes... where is the current video hash again, oh yeah curr_video_hashes
+    let result = compareVideoHashes(curr_video_hashes, past_video_hashes)
+    let curr_title = (await reddit.getPostById(post.id)).title
+    if (!temp_repost_dict[curr_title]) temp_repost_dict[curr_title] = result
   }
-  console.log('this is the fallbackurls: ', fallBackUrls, ' <- right here')
-  for (const url of fallBackUrls) {
-    try {
-      const res = await fetch(url)
-      const buf = new Uint8Array(await res.arrayBuffer())
-      console.log(`fetched ${url} -> status ${res.status}, ${buf.byteLength} bytes`)
 
-      const frames = await extractFrames(buf, 1)
-      console.log(
-        `decoded ${frames.length} frame(s) from ${url}:`,
-        frames.map(f => f.byteLength),
-      )
-    } catch (err) {
-      console.log(`pipeline FAILED for ${url}:`, err instanceof Error ? err.stack : err)
-    }
-  }
-  // for (const post of posts){
-  //   const thumbnail = await post.thumbnail?.url
-  //   if(thumbnail){
-  //     console.log('hey, this post has a thumbnail!(forgot to print this damn thing last time)', thumbnail)
-  //     console.log('also, this is the post title: ', post.title)
-  //   }
-  // }
+  console.log('hopefull this thing fucking works, but the app probably wont even start lmao...')
+  console.log('anyways, here is the 5 most recent posts along with their similarity indicies: ', temp_repost_dict)
+  
+  await reddit.submitComment({
+    id: postId,
+    text: `feature pending...`, 
+    runAs: 'APP'
+  })
+  
   return {res: 'this is a new post'}
 }
 async function routeGetCounter(): Promise<GetCounterRsp> {
