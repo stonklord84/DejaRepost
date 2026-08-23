@@ -1,5 +1,4 @@
 import createFFmpegCore from '@ffmpeg/core'
-
 // Hosted externally (Supabase Storage, public bucket) instead of bundled into
 // the server: embedding the ~32MB wasm binary directly in the server bundle
 // pushed it past whatever size/startup budget Devvit enforces, which broke
@@ -47,6 +46,35 @@ function getModule() {
       })
   }
   return modulePromise
+}
+
+export async function extractImage( image: Uint8Array, post_url: string ): Promise<Uint8Array>{
+  console.log('[decodeFrames] extractImage called, image bytes: ', image.byteLength)
+  const mod = await getModule()
+  let url_extension = post_url.split('.').pop()
+  const inFile = `input.${url_extension}`
+  const outputFile = `output.bin`
+
+  console.log('[decodeFrames] writing input to virtual FS...')
+  mod.FS.writeFile(inFile, image)
+  try{
+    const exitCode = mod.exec(
+      '-i', inFile,
+      '-vf', 'scale=9:8:flags=lanczos,format=gray',
+      '-f', 'rawvideo',
+      '-pix_fmt', 'gray',
+      outputFile
+    )
+    if (exitCode != 0) throw new Error(`ffmpeg image conversion failed with error code ${exitCode}`)
+
+    //mod.FS.readfile() is the thing giving you the Uint8Array object
+    let imageFile = mod.FS.readFile(outputFile)
+    mod.FS.unlink(outputFile)
+    return imageFile
+  }
+  finally{
+    mod.FS.unlink(inFile)
+  }
 }
 
 /** Decode `video` and return one PNG frame per second (or `fps` per second), in order. */

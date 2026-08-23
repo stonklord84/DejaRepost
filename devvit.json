@@ -31,6 +31,7 @@
   "triggers": {
     "onPostSubmit": "/internal/on-post-submit",
     "onAppInstall": "/internal/on-app-install"
+
   },
   "scheduler": {
     "tasks": {
@@ -44,5 +45,20 @@
   },
   "dev": {
     "subreddit": "dejapost_dev"
+  },
+  "settings": {
+    "subreddit": {
+      "timeThreshold":{
+        "type": "select",
+        "label": "Repost check window",
+        "options": [
+          { "label": "1 day", "value" : "1"},
+          { "label": "2 day", "value" : "2"},
+          { "label": "5 day", "value" : "5"}
+        ],
+        "helpText": "select how far back you want DejaPost to look",
+        "defaultValue": "2"
+      }
+    }
   }
 }
