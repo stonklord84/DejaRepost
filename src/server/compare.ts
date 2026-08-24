@@ -69,7 +69,7 @@ export function compareVideoHashes(video1: bigint[], video2: bigint[]): number{
         let currAvg = currTotal / (minLength - Math.abs(offset)) 
         if (currAvg < minAvg) minAvg = currAvg
     }
-    return Math.round((100 - minAvg) * 100) / 100
+    return Math.round((100 - (minAvg / 64) * 100) * 100) / 100
 }
 
 export function normalizeText(text: string): string{

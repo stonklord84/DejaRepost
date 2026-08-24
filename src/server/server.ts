@@ -126,18 +126,27 @@ async function seedFingerprints(reqMsg: IncomingMessage){
   console.log(posts_and_urls.length, 'this should not be long!!!!')
   for (const post_id of Object.keys(posts_and_urls)){
     if (posts_and_urls[post_id][1] == 'video'){
-      let video: Uint8Array[] = []
-      const res = await fetch(posts_and_urls[post_id][0])
-      const buf = await res.arrayBuffer()
-      video = await extractFrames(new Uint8Array(buf))
-      //im thinking maybe ill store the video inside redis
-      console.log(post_id, video.length, '<= video length')
-      //yeah ill store the video variable, with key postid!
-      //nah, lets fingerprint them all... yeah.
-      for (const [i, frame] of video.entries()){
-        await redis.hSet(`vid${post_id}`, {[String(i)]: dHash(frame).toString()})
+      try{
+        let video: Uint8Array[] = []
+        const fallbackUrl = posts_and_urls[post_id][0]
+        const lowres_fallbackUrl = fallbackUrl?.replace(/(DASH|CMAF)_\d+/, '$1_480')
+        let res = await fetch(lowres_fallbackUrl as string)
+        if (!res.ok){
+          res = await fetch(fallbackUrl as string)
+        }
+        const buf = await res.arrayBuffer()
+        video = await extractFrames(new Uint8Array(buf))
+        //im thinking maybe ill store the video inside redis
+        console.log(post_id, video.length, '<= video length')
+        //yeah ill store the video variable, with key postid!
+        //nah, lets fingerprint them all... yeah.
+        for (const [i, frame] of video.entries()){
+          await redis.hSet(`vid${post_id}`, {[String(i)]: dHash(frame).toString()})
+        }
+        await redis.expire(`vid${post_id}`, expiry_time*24*60*60)
+      } catch(err){
+        console.error('seedFingerprints video failed for', post_id, err)
       }
-      await redis.expire(`vid${post_id}`, expiry_time*24*60*60)
     }
     else if (posts_and_urls[post_id][1] == 'img'){
       let img: Uint8Array
@@ -175,6 +184,9 @@ async function appInstalled(reqMsg: IncomingMessage){
 }
 
 async function newPostSubmitted(reqMsg: IncomingMessage){
+  let imageTolerance = await settings.get('imageTolerance') ?? 80
+  let videoTolerance = await settings.get('videoTolerance') ?? 90
+  let textTolerance = await settings.get('textTolerance') ?? 70
   console.log('New Post Submitted')
   async function delayTime(ms: number){
     return new Promise((resolve)=>{
@@ -190,9 +202,10 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
   console.log()
   let postMetaInfo = await reddit.getPostById(postId)
   let tries = 3
-  let countDown = 3
+  let countDown = 6
+  console.log(postMetaInfo.url.includes('v.redd.it'), 'this should be false for non videos!')
   if (!postMetaInfo){
-    console.log('secureMedia is not loaded, waiting for 3 seconds...')
+    console.log('secureMedia is not loaded, waiting for 6 seconds...')
   }
   while (!postMetaInfo.secureMedia && tries > 0){
     console.log(String(countDown) + '...')
@@ -206,7 +219,7 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
     }
   }
   const recent_post_ids: string[] = []
-  let temp_repost_dict: Record<string, number> = {}
+  let temp_repost_dict: Record<string, [number, string]> = {}
   let post_url = postMetaInfo.url?.toLowerCase()
   let newPosts = await reddit.getNewPosts({
       subredditName: context.subredditName,
@@ -217,10 +230,21 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
   let timeSetting
   timeSetting = await settings.get('timeThreshold') ?? 2
   console.log(Number(timeSetting), 'this should be 30....')
-
+  
+  let currPostisVideo = postMetaInfo.secureMedia?.redditVideo?.fallbackUrl
+  let currPostisImg = (postMetaInfo.url.includes('i.redd.it') || 
+  postMetaInfo.url.endsWith('png') || postMetaInfo.url.endsWith('jpg')
+  || postMetaInfo.url.endsWith('gif'))
   if (postMetaInfo.secureMedia?.redditVideo){
+    try{
     const fallbackUrl = postMetaInfo.secureMedia?.redditVideo?.fallbackUrl
-    const res = await fetch(fallbackUrl as string)
+    const lowres_fallbackUrl = fallbackUrl?.replace(/(DASH|CMAF)_\d+/, '$1_480')
+    let res = await fetch(lowres_fallbackUrl as string)
+    console.log(lowres_fallbackUrl, res.ok, res.status)
+    if (!res.ok){
+      res = await fetch(fallbackUrl as string)
+    }
+
     const buffer = await res.arrayBuffer()
     let video: Uint8Array[] = []
     video = await extractFrames(new Uint8Array(buffer))
@@ -245,13 +269,17 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
       if (differenceDays > Number(timeSetting)) break
       console.log(post.title, post.id)
       recent_post_ids.push(post.id)
-
-      let isInDatabase = await redis.get(`vid${post.id.toString()}`)
-      if (isInDatabase == undefined){
+      
+      let redis_past_video_hashes = await redis.hGetAll(`vid${post.id}`)
+      if (Object.keys(redis_past_video_hashes).length === 0){
         let video: Uint8Array[] = []
         let videoUrl = post.secureMedia?.redditVideo?.fallbackUrl
+        let lowres_videoUrl = videoUrl?.replace(/(DASH|CMAF)_\d+/, '$1_480')
         if (!videoUrl) continue
-        const res = await fetch(videoUrl)
+        let res = await fetch(lowres_videoUrl as string)
+        if (!res.ok){
+          res = await fetch(videoUrl)
+        }
         const buf = await res.arrayBuffer()
         video = await extractFrames(new Uint8Array(buf))
         for (const [i, frame] of video.entries()){
@@ -259,19 +287,25 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
         }
         await redis.expire(`vid${post.id}`, expiry_time*24*60*60)
       }
-      let redis_past_video_hashes = await redis.hGetAll(`vid${post.id.toString()}`)
+    
+
+
       //ok, you have all the past video hashes of a specific post, time to convert them into bigint
       let past_video_hashes: bigint[] = []
       Object.values(redis_past_video_hashes).forEach((h)=> past_video_hashes.push(BigInt(h)))
       //ok, now you have an array of both pastvideo hashes... where is the current video hash again, oh yeah curr_video_hashes
       let result = compareVideoHashes(curr_video_hashes, past_video_hashes)
       let curr_title = (await reddit.getPostById(post.id)).title
-      if (!temp_repost_dict[curr_title]) temp_repost_dict[curr_title] = result
+      if (!temp_repost_dict[`${post.id}`]) temp_repost_dict[`${post.id}`] = [result, `https://www.reddit.com${post.permalink}`]
+      if (result > Number(videoTolerance)) break
     }
     for (const [hash, i] of curr_video_hashes.entries()){
       redis.hSet(`vid${postId}`, {[String(i)]: hash.toString()})
     }
     await redis.expire(`vid${postId}`, expiry_time*24*60*60)
+    } catch(err){
+      console.error('video repost check failed:', err)
+    }
   }
 
 
@@ -309,7 +343,8 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
         hamming = Math.round(100 - ((hammingDistance(BigInt(redis_past_hash), image_hash) / 64) * 100))
       }
       let curr_title = post.title
-      if (!temp_repost_dict[curr_title]) temp_repost_dict[curr_title] = hamming
+      if (!temp_repost_dict[`${post.id}`]) temp_repost_dict[`${post.id}`] = [hamming, `https://www.reddit.com${post.permalink}`]
+      if (hamming > Number(imageTolerance)) break
     }
     redis.set(`img${postId}`, `${image_hash}`)
     await redis.expire(`img${postId}`, expiry_time*24*60*60)
@@ -328,6 +363,10 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
 
       let isInDataBase = await redis.get(`txt${post.id}`)
       if (isInDataBase == undefined){
+        let postUrl = post.url
+        let isImage = (postUrl.endsWith('png') || postUrl.endsWith('jpg') || postUrl.endsWith('gif') || postUrl.includes('i.redd.it'))
+        let isVideo = post.secureMedia?.redditVideo?.fallbackUrl
+        if (isImage || isVideo) continue
         let curr_normalized = normalizeText(post.title)
         let curr_shingle = shingle(curr_normalized)
         let curr_simhash = simHash(curr_shingle)
@@ -339,13 +378,96 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
       if (past_simhash != ''){
         hamming = Math.round(100 - ((hammingDistance(BigInt(past_simhash), curr_simhash) / 64) * 100))
       }
-      if (!temp_repost_dict[post.title]) temp_repost_dict[post.title] = hamming
+      if (!temp_repost_dict[`${post.id}`]) temp_repost_dict[`${post.id}`] = [hamming, `https://www.reddit.com${post.permalink}`]
+      if (hamming > Number(textTolerance)) break
     }
     await redis.set(`txt${postId.toString()}`, curr_simhash.toString())
     await redis.expire(`txt${postId}`, expiry_time*24*60*60)
   }
   //ok, so we got postMetainfo.secureMedia now
   //now get its hash
+  let username = postMetaInfo.authorName
+  let enforcementAction: string
+  enforcementAction = await settings.get("enforcementAction") ?? "report"
+  for (const value of Object.values(temp_repost_dict)){
+    if (currPostisVideo){
+      if (value[0] >= Number(videoTolerance)){
+        await reddit.modMail.createConversation(
+          {
+            subredditName: sub,
+            subject: 'DejaPost has detected a possible repost',
+            body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}`,
+            to: null
+          }
+        )
+        if (enforcementAction == "report"){
+          reddit.report(postMetaInfo, {reason: `possible repost of ${value[1]}`})
+        } else if (enforcementAction == "remove"){
+          reddit.remove(postMetaInfo.id, false)
+          const comment = await reddit.submitComment({
+            id: postId,
+            text: 
+            `Hi ${username}, \n\n
+            your post was removed because it was previously posted here: ${value[1]} \n\n
+            if you believe this was a mistake, please reach out to us via https://www.reddit.com/message/compose?to=/r/${sub}
+            `,
+            runAs: 'APP'
+          })
+          await comment.distinguish(true)
+        }
+      }
+    } else if (currPostisImg){
+      await reddit.modMail.createConversation(
+        {
+          subredditName: sub,
+          subject: 'DejaPost has detected a possible repost',
+          body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}`,
+          to: null
+        }
+      )
+      if (value[0] >= Number(imageTolerance)){
+        if (enforcementAction == "report"){
+          reddit.report(postMetaInfo, {reason: `possible repost of ${value[1]}`})
+        } else if (enforcementAction == "remove"){
+          console.log('fuckin remove it ig')
+          reddit.remove(postMetaInfo.id, false)
+          const comment = await reddit.submitComment({
+            id: postId,
+            text: `Hi ${username}, \n\n
+            your post was removed because it was previously posted here: ${value[1]} \n\n
+            if you believe this was a mistake, please reach out to us via https://www.reddit.com/message/compose?to=/r/${sub}`, 
+            runAs: 'APP'
+          })
+          await comment.distinguish(true)
+        }
+      }
+    } else{
+      await reddit.modMail.createConversation(
+        {
+          subredditName: sub,
+          subject: 'DejaPost has detected a possible repost',
+          body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}`,
+          to: null
+        }
+      )
+      if (value[0] >= Number(textTolerance)){
+        if (enforcementAction == "report"){
+          reddit.report(postMetaInfo, {reason: `possible repost of ${value[1]}`})
+        } else if (enforcementAction == "remove"){
+          console.log('fuckin remove it ig')
+          reddit.remove(postMetaInfo.id, false)
+          const comment = await reddit.submitComment({
+            id: postId,
+            text: `Hi ${username}, \n\n
+            your post was removed because it was previously posted here: ${value[1]} \n\n
+            if you believe this was a mistake, please reach out to us via https://www.reddit.com/message/compose?to=/r/${sub}`, 
+            runAs: 'APP'
+          })
+          await comment.distinguish(true)
+        }
+      }
+    }
+  }
 
   console.log('hopefull this thing fucking works, but the app probably wont even start lmao...')
   console.log('anyways, here is the 5 most recent posts along with their similarity indicies: ', temp_repost_dict)

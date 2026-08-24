@@ -30,7 +30,8 @@
   },
   "triggers": {
     "onPostSubmit": "/internal/on-post-submit",
-    "onAppInstall": "/internal/on-app-install"
+    "onAppInstall": "/internal/on-app-install",
+    "onModAction": "/internal/on-mod-action"
 
   },
   "scheduler": {
@@ -52,12 +53,42 @@
         "type": "select",
         "label": "Repost check window",
         "options": [
-          { "label": "1 day", "value" : "1"},
-          { "label": "2 day", "value" : "2"},
-          { "label": "5 day", "value" : "5"}
+          { "label": "30 days", "value" : "30"},
+          { "label": "60 days", "value" : "60"},
+          { "label": "90 days", "value" : "90"}
         ],
         "helpText": "select how far back you want DejaPost to look",
-        "defaultValue": "2"
+        "defaultValue": "30"
+      },
+      "enforcementAction":{
+        "type": "select",
+        "label": "Enforcement action",
+        "options": [
+          { "label": "Report post", "value": "report" },
+          { "label": "Remove post", "value": "remove" }
+        ],
+        "helpText": "Choose what action DejaPost takes when a match is found",
+        "defaultValue": "report"
+      },
+      "imageTolerance": {
+        "type": "number",
+        "label": "Image Reposts Matching Tolerance",
+        "defaultValue": 80,
+        "helpText": 
+        "Higher tolerance allows more variation between image posts (51 = low tolerance for differences / near-exact match required, 99 = high tolerance / loose matching allowed)."
+      }, "videoTolerance": {
+        "type": "number",
+        "label": "Video Reposts Matching Tolerance",
+        "defaultValue": 90,
+        "helpText": 
+        "Higher tolerance allows more variation between video posts (51 = low tolerance for differences / near-exact match required, 99 = high tolerance / loose matching allowed)."
+      }, "textTolerance": {
+        "type": "number",
+        "label": "Text Reposts Matching Tolerance",
+        "defaultValue": 80,
+
+        "helpText": 
+        "Higher tolerance allows more variation between text post titles (51 = low tolerance for differences / near-exact match required, 99 = high tolerance / loose matching allowed)."
       }
     }
   }
