@@ -1,6 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "dejapost",
+  "name": "dejarepost",
   "post": {
     "entrypoints": {
       "default": {
@@ -15,14 +15,14 @@
   "permissions": {
     "http": {
       "enable": true,
-      "domains": ["v.redd.it", "qtyvytpodaznfhffdzus.supabase.co"]
+      "domains": ["v.redd.it", "i.redd.it", "qtyvytpodaznfhffdzus.supabase.co"]
     }
   },
   "menu": {
     "items": [
       {
-        "label": "[dejapost] New Post",
-        "description": "Create a new dejapost post.",
+        "label": "[dejarepost] New Post",
+        "description": "Create a new dejarepost post.",
         "location": "subreddit",
         "endpoint": "/internal/on/menu/new-post"
       }
@@ -45,7 +45,7 @@
     "dev": "npm run watch"
   },
   "dev": {
-    "subreddit": "dejapost_dev"
+    "subreddit": "dejarepost_dev"
   },
   "settings": {
     "subreddit": {
@@ -57,7 +57,7 @@
           { "label": "60 days", "value" : "60"},
           { "label": "90 days", "value" : "90"}
         ],
-        "helpText": "select how far back you want DejaPost to look",
+        "helpText": "select how far back you want DejaRepost to look",
         "defaultValue": "30"
       },
       "enforcementAction":{
@@ -67,7 +67,7 @@
           { "label": "Report post", "value": "report" },
           { "label": "Remove post", "value": "remove" }
         ],
-        "helpText": "Choose what action DejaPost takes when a match is found",
+        "helpText": "Choose what action DejaRepost takes when a match is found",
         "defaultValue": "report"
       },
       "imageTolerance": {
@@ -75,20 +75,19 @@
         "label": "Image Reposts Matching Tolerance",
         "defaultValue": 80,
         "helpText": 
-        "Higher tolerance allows more variation between image posts (51 = low tolerance for differences / near-exact match required, 99 = high tolerance / loose matching allowed)."
+        "Set it to 99 → an image needs to be 99% similar to get flagged → only near-identical duplicates trigger it → strict, exact-match required."
       }, "videoTolerance": {
         "type": "number",
         "label": "Video Reposts Matching Tolerance",
-        "defaultValue": 90,
+        "defaultValue": 80,
         "helpText": 
-        "Higher tolerance allows more variation between video posts (51 = low tolerance for differences / near-exact match required, 99 = high tolerance / loose matching allowed)."
+        "Set it to 99 → a video needs to be 99% similar to get flagged → only near-identical duplicates trigger it → strict, exact-match required."
       }, "textTolerance": {
         "type": "number",
         "label": "Text Reposts Matching Tolerance",
         "defaultValue": 80,
-
         "helpText": 
-        "Higher tolerance allows more variation between text post titles (51 = low tolerance for differences / near-exact match required, 99 = high tolerance / loose matching allowed)."
+        "Set it to 99 → a video needs to be 99% similar to get flagged → only near-identical duplicates trigger it → strict, exact-match required."
       }
     }
   }

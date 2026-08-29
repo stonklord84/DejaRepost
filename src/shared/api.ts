@@ -15,7 +15,8 @@ export const Endpoint = {
   OnMenuNewPost: 'internal/on/menu/new-post',
   OnPostSubmit: 'internal/on-post-submit',
   OnAppInstall: 'internal/on-app-install',
-  SeedFingerprints: 'internal/scheduler/seed-fingerprints'
+  SeedFingerprints: 'internal/scheduler/seed-fingerprints',
+  OnModAction: 'internal/on-mod-action'
   
 } as const
 
@@ -25,5 +26,6 @@ export const EndpointMethod = {
   [Endpoint.OnMenuNewPost]: 'POST',
   [Endpoint.OnPostSubmit]: 'POST',
   [Endpoint.OnAppInstall]: 'POST',
-  [Endpoint.SeedFingerprints]: 'POST'
+  [Endpoint.SeedFingerprints]: 'POST',
+  [Endpoint.OnModAction]: 'POST'
 } as const satisfies {[endpoint: string]: 'GET' | 'POST'}

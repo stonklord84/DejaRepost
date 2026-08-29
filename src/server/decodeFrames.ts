@@ -25,7 +25,7 @@ function getModule() {
     // lets make 10 fingerprints, on app start
     const g = globalThis as {self?: unknown; location?: unknown}
     g.self ??= globalThis
-    g.location ??= {href: 'file:///dejapost-server/'}
+    g.location ??= {href: 'file:///dejarepost-server/'}
 
     modulePromise = fetch(WASM_URL)
       .then(res => {
@@ -96,7 +96,7 @@ export async function extractFrames(
     const exitCode = mod.exec(
       '-i', inFile,
       '-t', '30',
-      '-vf', 'fps=1,scale=9:8:flags=lanczos,format=gray',
+      '-vf', `fps=${fps},scale=9:8:flags=lanczos,format=gray`,
       '-f', 'rawvideo',
       '-pix_fmt', 'gray',
       outputFile
