@@ -49,6 +49,18 @@
   },
   "settings": {
     "subreddit": {
+      "appToggle": {
+        "type": "boolean",
+        "label": "Enable bot",
+        "helpText": "Turn the bot on or off for this subreddit",
+        "defaultValue": true
+      },
+      "modmailAlert": {
+        "type": "boolean",
+        "label": "Modmail Alerts",
+        "helpText": "Tells DejaRepost if it should alert you in modmail when it detects a possible repost",
+        "defaultValue": true
+      },
       "timeThreshold":{
         "type": "select",
         "label": "Repost check window",
@@ -70,24 +82,36 @@
         "helpText": "Choose what action DejaRepost takes when a match is found",
         "defaultValue": "report"
       },
+      "postTypeToggle":{
+        "type": "multiSelect",
+        "label": "Toggle enforcement on post types",
+        "options": [
+          { "label": "Image posts", "value": "image" },
+          { "label": "Video posts", "value": "video" },
+          { "label": "Text posts", "value": "text" }
+        ],
+        "defaultValue": ["image", "video"],
+        "helpText":
+        "Tell DejaRepost if it should enforce anti-repost checks on Image, Video, or Text posts. (on for image and video post types by default)"
+      },
       "imageTolerance": {
         "type": "number",
         "label": "Image Reposts Matching Tolerance",
         "defaultValue": 80,
         "helpText": 
-        "Set it to 99 → an image needs to be 99% similar to get flagged → only near-identical duplicates trigger it → strict, exact-match required."
+        "Pick a value between 51 and 99. 51 → Even vaguely similar images will be flagged. 99 → only identical or near-identical duplicate images will trigger the bot.\n Recommended value: 80"
       }, "videoTolerance": {
         "type": "number",
         "label": "Video Reposts Matching Tolerance",
         "defaultValue": 80,
         "helpText": 
-        "Set it to 99 → a video needs to be 99% similar to get flagged → only near-identical duplicates trigger it → strict, exact-match required."
+        "Pick a value between 51 and 99. 51 → Even vaguely similar videos will be flagged. 99 → only identical or near-identical duplicate videos will trigger the bot.\n Recommended value: 80"
       }, "textTolerance": {
         "type": "number",
         "label": "Text Reposts Matching Tolerance",
         "defaultValue": 80,
         "helpText": 
-        "Set it to 99 → a video needs to be 99% similar to get flagged → only near-identical duplicates trigger it → strict, exact-match required."
+        "Pick a value between 51 and 99. 51 → Even vaguely similar text titles will be flagged. 99 → only identical or near-identical duplicate text titles will trigger the bot.\n Recommended value: 80"
       }
     }
   }

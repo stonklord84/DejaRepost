@@ -10,6 +10,7 @@ const WASM_URL =
 
 let modulePromise: ReturnType<typeof createFFmpegCore> | null = null
 
+
 // Deferred until the first real call, not run at module load, same reasoning
 // as before: don't pay this cost on every cold start, only when a video
 // actually needs decoding.

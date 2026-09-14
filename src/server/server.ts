@@ -1,7 +1,7 @@
 import {once} from 'node:events'
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {context, reddit, redis, scheduler} from '@devvit/web/server'
-import { compareVideoHashes, dHash, hammingDistance, normalizeText, shingle, simHash } from './compare.ts'
+import { compareVideoHashes, dHash, hammingDistance, mirrorFrameHash, normalizeText, reverseBits, shingle, simHash } from './compare.ts'
 import type {
   PartialJsonValue,
   TriggerResponse,
@@ -85,18 +85,9 @@ async function route(
   writeJson<PartialJsonValue>('status' in rsp ? rsp.status : 200, rsp, rspMsg)
 }
 
-async function modActionTaken(reqMsg: IncomingMessage){
-  let req = await readJson(reqMsg) as any
-  //console.log(req, 'this is req from modActionTaken')
-  if (req.action == 'removelink'){
-    let removedPostId = req.targetPost.id
-    await redis.del(`txt${removedPostId}`, `img${removedPostId}`, `vid${removedPostId}`)
-  }
-  return {"action": "test"}
-}
 
 const DAY_MS = 24 * 60 * 60 * 1000
-const SEED_BATCH = 20 //videos fingerprinted per job run
+const SEED_BATCH = 15 //videos fingerprinted per job run
 const BACKFILL_CAP = 5 //max videos onPostSubmit will fingerprint
 
 function isVideoPost(post: any): boolean{
@@ -115,6 +106,21 @@ function isImagePost(post: any): boolean{
 
 function isSelfPost(post: any): boolean{
   return post.url.endsWith(post.permalink)
+}
+
+async function modActionTaken(reqMsg: IncomingMessage){
+  let req = await readJson(reqMsg) as any
+  //console.log(req, 'this is req from modActionTaken')
+  if (req.action == 'removelink'){
+    let removedPostId = req.targetPost.id
+    // let rememberRemovedPosts: boolean
+    await redis.del(`txt${removedPostId}`, `img${removedPostId}`, `vid${removedPostId}`)
+    // rememberRemovedPosts = await settings.get('rememberRemovedPosts') ?? false
+    // if (!rememberRemovedPosts){
+    //   await redis.del(`txt${removedPostId}`, `img${removedPostId}`, `vid${removedPostId}`)
+    // }
+  }
+  return {"action": "test"}
 }
 
 async function getWindowPosts(subredditName: string, days: number, hardCap = 1000): Promise<any[]>{
@@ -178,7 +184,13 @@ async function seedFingerprints(reqMsg: IncomingMessage){
     let isCrossPost = post.crosspostParentId
     let originalpost = post
     if (isCrossPost){
-      post = await reddit.getPostById(isCrossPost)
+      try{
+        post = await reddit.getPostById(isCrossPost)
+      } catch(err){
+        console.log(err, 'crosspost error!')
+        console.log(originalpost.permalink, 'this is the permalink of a crosspost that had its original post removed')
+        continue
+      }
     }
     if (isVideoPost(post)){
       if ((await redis.hLen(`vid${originalpost.id}`)) > 0) continue
@@ -187,9 +199,12 @@ async function seedFingerprints(reqMsg: IncomingMessage){
         continue
       }
       try{
+        console.time(`seed video ${originalpost.id}`)
         await fingerprintVideoPost(post, originalpost)
+        console.timeEnd(`seed video ${originalpost.id}`)
         done++
       } catch (err){
+        console.timeEnd(`seed video ${originalpost.id}`)
         console.log(err, 'fingerprint failed')
       }
     }
@@ -240,6 +255,26 @@ async function seedFingerprints(reqMsg: IncomingMessage){
 async function appInstalled(reqMsg: IncomingMessage){
   const req = await readJson(reqMsg)
   console.log('app installed bozo')
+  try{
+    await reddit.modMail.createConversation(
+      {
+        subredditName: (req as any).subreddit?.name,
+        subject: 'Thank you for installing DejaRepost!',
+        body: `DejaRepost will now report any reposts it catches and notify you here in modmail. 
+It will provide you with the link to the reported post, the link to the past post it matched with, along with a confidence scoring of the report.\n
+You can change how far back DejaRepost checks for reposts with the "Repost check window" setting (30, 60, or 90 days) in your subreddit's app settings\n
+If you want DejaRepost to actually remove the reported posts, set its "Enforcement Action" to "Remove Posts" in the app settings for your subreddit.\n
+You can use the "Toggle enforcement on post types" setting to target specific post types.
+DejaRepost is now fingerprinting past posts... This takes a little while, it will be able to detect older reposts as it finishes.\n
+Found a bug or have an idea for a feature? Post it on r/DejaRepost! I read everything and reply.\n
+        `,
+        to: null
+      }
+    )
+  } catch(err){
+    console.log(`DejaRepost failed to send installation modmail. error: ${err}`)
+  }
+  
   await scheduler.runJob({
     name: 'seed-fingerprints',
     data: {subredditName: (req as any).subreddit?.name},
@@ -249,6 +284,8 @@ async function appInstalled(reqMsg: IncomingMessage){
 }
 
 async function newPostSubmitted(reqMsg: IncomingMessage){
+  let appToggle = await settings.get('appToggle') ?? true
+  if (!appToggle) return {res: 'app has been toggled off! App will not do anything!'}
   let imageTolerance = await settings.get('imageTolerance') ?? 80
   let videoTolerance = await settings.get('videoTolerance') ?? 90
   let textTolerance = await settings.get('textTolerance') ?? 70
@@ -258,6 +295,14 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
       setTimeout(resolve, ms)
     })
   }
+  let postTypeToggle: string[] = []
+  postTypeToggle = await settings.get("postTypeToggle") ?? ["image", "video"]
+  let checkImage = postTypeToggle.includes('image')
+  let checkVideo = postTypeToggle.includes('video')
+  let checkText = postTypeToggle.includes('text')
+  if (!checkImage && !checkVideo && !checkText){
+    return { res: 'DejaRepost will enforce anti-repost check on 0 post types' }
+  }
   
   const sub = context.subredditName
   const req = await readJson(reqMsg)
@@ -265,11 +310,27 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
   console.log('--------------------------------')
   const postId = (req as any).post?.id
   console.log()
-  let postMetaInfo = await reddit.getPostById(postId)
+  let postMetaInfo: any;
+  for (let attempt = 1; attempt <= 5; attempt++){
+    try{
+      postMetaInfo = await reddit.getPostById(postId)
+      console.log(`getPostById succeeded on attempt ${attempt}`)
+      break
+    } catch (err){
+      console.log(`getPostById failed on attempt ${attempt}:`, err)
+      await delayTime(2000)
+    }
+  }
   let actualPostMetaInfo = postMetaInfo
   const isCrossPost = postMetaInfo.crosspostParentId
   if (isCrossPost) {
-    postMetaInfo = await reddit.getPostById(isCrossPost)
+    try{
+      postMetaInfo = await reddit.getPostById(isCrossPost)
+    } catch (err){
+      console.log(err, 'crosspost error!')
+      console.log(actualPostMetaInfo.permalink, 'this is the permalink of a crosspost that had its original post removed')
+      return {res: 'crosspost parent unavailable. skipping...'}
+    }
   }
 
   console.log(postMetaInfo.url, 'this is the post url, check how it looks for videos, images and text')
@@ -285,7 +346,7 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
     countDown -= 1;
     if (countDown == 0){
       tries -= 1
-      countDown = 3
+      countDown = 6
       postMetaInfo = await reddit.getPostById(postId)
       console.log('SecureMedia still not loaded! restarting timer...')
     }
@@ -296,30 +357,45 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
   const recent_post_ids: string[] = []
   let temp_repost_dict: Record<string, [number, string]> = {}
   let post_url = postMetaInfo.url?.toLowerCase()
-  let newPosts = await reddit.getNewPosts({
-      subredditName: context.subredditName,
-      limit: 4000,
-      pageSize: 40
-    }).all()
-  newPosts = newPosts.slice(1)
   let timeSetting
   timeSetting = await settings.get('timeThreshold') ?? 2
   console.log(Number(timeSetting), 'this should be 30....')
+  let newPosts: any[] = []
+  const cutoffDays = Number(timeSetting)
+  for await (const post of reddit.getNewPosts({
+    subredditName: context.subredditName,
+    limit: 4000,
+    pageSize: 100
+  })) {
+    const ageDays = (Date.now() - post.createdAt.getTime()) / DAY_MS
+    if (ageDays > cutoffDays) break
+    newPosts.push(post)
+  }
+  // let newPosts = await reddit.getNewPosts({
+  //     subredditName: context.subredditName,
+  //     limit: await settings.get('timeThreshold') as number,//4000,
+  //     pageSize: 100
+  //   }).all()
+  newPosts = newPosts.slice(1)
   
   let currPostisVideo = postMetaInfo.secureMedia?.redditVideo?.fallbackUrl
   let currPostisImg = (postMetaInfo.url.includes('i.redd.it') || 
   postMetaInfo.url.endsWith('png') || postMetaInfo.url.endsWith('jpg')
   || postMetaInfo.url.endsWith('gif'))
 
-  if (postMetaInfo.secureMedia?.redditVideo){
+  if (postMetaInfo.secureMedia?.redditVideo && checkVideo){
     try{
       // 1. fingerprint the newly submitted post (this also stores vid<postId>)
       const curr_video_hashes = await fingerprintVideoPost(postMetaInfo, actualPostMetaInfo)
+      for (let i = 0; i < curr_video_hashes.length; i++){
+        console.log(curr_video_hashes[i].toString(), `this is frame ${i+1}`)
+      }
 
       // 2. walk the window and compare against stored fingerprints.
       //    fingerprint at most BACKFILL_CAP gaps here; the seed job handles the rest.
       let backfilled = 0
       for (let post of newPosts){
+        if (post.id == postId) continue
         let differenceDays = (Date.now() - post.createdAt.getTime()) / (1000 * 60 * 60 * 24)
         if (differenceDays > Number(timeSetting)) break
         console.log(post.title, post.id)
@@ -328,7 +404,13 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
         let isCrossPost = post.crosspostParentId
         let originalPost = post
         if(isCrossPost){
-          post = await reddit.getPostById(isCrossPost)
+          try{
+            post = await reddit.getPostById(isCrossPost)
+          } catch (err){
+            console.log(err, 'crosspost error!')
+            console.log(originalPost.permalink, 'this is the permalink of a crosspost that had its original post removed')
+            continue
+          }
         }
         if (Object.keys(stored).length === 0){
           if (!isVideoPost(post)) continue
@@ -345,6 +427,12 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
 
         let past_video_hashes: bigint[] = Object.values(stored).map(h => BigInt(h))
         let result = compareVideoHashes(curr_video_hashes, past_video_hashes)
+        let past_video_hashes_mirrored: bigint[] = []
+        for (let i = 0; i < past_video_hashes.length; i++){
+          past_video_hashes_mirrored.push(mirrorFrameHash(past_video_hashes[i]))
+        }
+        let result_mirrored = compareVideoHashes(curr_video_hashes, past_video_hashes_mirrored)
+        result = Math.max(result, result_mirrored)
         if (!temp_repost_dict[`${originalPost.id}`]) temp_repost_dict[`${originalPost.id}`] = [result, `https://www.reddit.com${originalPost.permalink}`]
         if (result > Number(videoTolerance)) break
       }
@@ -354,13 +442,14 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
   }
 
 
-  else if (post_url.endsWith('.png') || post_url.endsWith('.jpg') || post_url.endsWith('.gif') || post_url.includes('i.redd.it')){
+  else if ((post_url.endsWith('.png') || post_url.endsWith('.jpg') || post_url.endsWith('.gif') || post_url.includes('i.redd.it')) && checkImage){
     let res = await fetch(postMetaInfo.url)
     let buf = await res.arrayBuffer()
     let img_frame = await extractImage(new Uint8Array(buf), post_url)
     let image_hash = dHash(img_frame)
     let backFill = 0
     for (let post of newPosts){
+      if (post.id == postId) continue
       recent_post_ids.push(post.id)
       // compare post with image_hash
       // so i have to get the hash of post_id
@@ -373,7 +462,13 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
       let isCrossPost = post.crosspostParentId
       let originalPost = post
       if(isCrossPost){
-        post = await reddit.getPostById(isCrossPost)
+        try{
+          post = await reddit.getPostById(isCrossPost)
+        } catch (err){
+          console.log(err, 'crosspost error!')
+          console.log(originalPost.permalink, 'this is the permalink of a crosspost that had its original post removed')
+          continue
+        }
       }
       let isInDatabase = await redis.get(`img${originalPost.id}`)
       if (isInDatabase == undefined){
@@ -397,7 +492,9 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
       redis_past_hash = await redis.get(`img${originalPost.id.toString()}`) ?? ''
       let hamming = 0
       if (redis_past_hash != ''){
-        hamming = Math.round(100 - ((hammingDistance(BigInt(redis_past_hash), image_hash) / 64) * 100))
+        Math.round(100 - (hamming / 64) * 100) / 100
+        hamming  = Math.round(100 - (hammingDistance(BigInt(redis_past_hash), image_hash) * 100)) / 100
+        //hamming = Math.round(100 - ((hammingDistance(BigInt(redis_past_hash), image_hash) / 64) * 100))
       }
       let curr_title = post.title
       if (!temp_repost_dict[`${originalPost.id}`]) temp_repost_dict[`${originalPost.id}`] = [hamming, `https://www.reddit.com${originalPost.permalink}`]
@@ -407,13 +504,14 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
     await redis.expire(`img${postId}`, expiry_time*24*60*60)
 
 
-  } else if (isSelfPost(postMetaInfo)){
+  } else if (isSelfPost(postMetaInfo) && checkText){
     let curr_normalized = normalizeText(postMetaInfo.title)
     let curr_shingle = shingle(curr_normalized)
     let curr_simhash = simHash(curr_shingle)
     let backfill = 0
     
     for (let post of newPosts){
+      if (post.id == postId) continue
       let postDate = post.createdAt
       let currDate = Date.now()
       let differenceMS = currDate - postDate.getTime()
@@ -453,19 +551,32 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
   let username = postMetaInfo.authorName
   let enforcementAction: string
   enforcementAction = await settings.get("enforcementAction") ?? "report"
+  let modmailAlert: boolean
+  modmailAlert = await settings.get("modmailAlert") ?? true
   if (isCrossPost) postMetaInfo = actualPostMetaInfo
   for (const value of Object.values(temp_repost_dict)){
     if (currPostisVideo){
       if (value[0] >= Number(videoTolerance)){
         await reddit.modMail.createConversation(
           {
-            subredditName: sub,
-            subject: 'DejaRepost has detected a possible repost',
+            subredditName: 'DejaRepost',
+            subject: `DejaRepost has detected a possible repost from the subreddit ${sub}`,
             body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}\n
             confidence level: ${value[0]}`,
             to: null
           }
         )
+        if (modmailAlert){
+          await reddit.modMail.createConversation(
+            {
+              subredditName: sub,
+              subject: 'DejaRepost has detected a possible repost',
+              body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}\n
+              confidence level: ${value[0]}`,
+              to: null
+            }
+          )
+        }
         if (enforcementAction == "report"){
           try{
             await reddit.report(postMetaInfo, {reason: `Possible repost identified by DejaRepost`})
@@ -493,16 +604,18 @@ if you believe this was a mistake, please reach out to us via https://www.reddit
       }
     } else if (currPostisImg){
       if (value[0] >= Number(imageTolerance)){
-        await reddit.modMail.createConversation(
-          {
-            subredditName: sub,
-            subject: 'DejaRepost has detected a possible repost',
-            body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}\n
-            confidence level: ${value[0]}
-            `,
-            to: null
-          }
-        )
+        if (modmailAlert){
+          await reddit.modMail.createConversation(
+            {
+              subredditName: sub,
+              subject: 'DejaRepost has detected a possible repost',
+              body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}\n
+              confidence level: ${value[0]}
+              `,
+              to: null
+            }
+          )
+        }
         if (enforcementAction == "report"){
           try{
             await reddit.report(postMetaInfo, {reason: `Possible repost identified by DejaRepost`})
@@ -528,15 +641,17 @@ if you believe this was a mistake, please reach out to us via https://www.reddit
       }
     } else{
       if (value[0] >= Number(textTolerance)){
-        await reddit.modMail.createConversation(
-          {
-            subredditName: sub,
-            subject: 'DejaRepost has detected a possible repost',
-            body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}\n
-            confidence level: ${value[0]}`,
-            to: null
-          }
-        )
+        if (modmailAlert){
+          await reddit.modMail.createConversation(
+            {
+              subredditName: sub,
+              subject: 'DejaRepost has detected a possible repost',
+              body: `The post https://reddit.com${postMetaInfo.permalink} is a possible repost of: \n${value[1]}\n
+              confidence level: ${value[0]}`,
+              to: null
+            }
+          )
+        }
         if (enforcementAction == "report"){
           try{
             await reddit.report(postMetaInfo, {reason: `Possible repost identified by DejaRepost`})

@@ -1,3 +1,23 @@
+export function reverseBits(sourceNumber: bigint, totalBitsToProcess: number): bigint{
+    let reversedResult = 0n
+    for (let i = 0; i < totalBitsToProcess; i++){
+        let lastBit = sourceNumber & 1n
+        reversedResult = (reversedResult << 1n) | lastBit
+        sourceNumber = sourceNumber >> 1n
+    }
+    return reversedResult
+}
+
+export function mirrorFrameHash(sourceHash: bigint): bigint{
+    let mirroredHash = 0n
+    for (let rowIndex = 0n; rowIndex < 8n; rowIndex++){
+        let rowBits = (sourceHash >> (rowIndex * 8n)) & 0xFFn
+        let mirroredRow = reverseBits(rowBits, 8) ^ 0xFFn
+        mirroredHash = mirroredHash | (mirroredRow << (rowIndex * 8n))
+    }
+    return mirroredHash
+}
+
 export function dHash(frame: Uint8Array): bigint{
     let hash = 0n
     let bit = 0n
@@ -49,7 +69,7 @@ export function compareVideo(video1: Uint8Array[], video2: Uint8Array[]): number
         let currAvg = currTotal / (minLength - Math.abs(i))
         if (currAvg < minAvg) minAvg = currAvg
     }
-    return Math.round((100 - minAvg) * 100) / 100
+    return Math.round((100 - (minAvg / 64)) * 100) / 100
 }
 
 export function compareVideoHashes(video1: bigint[], video2: bigint[]): number{
@@ -61,6 +81,8 @@ export function compareVideoHashes(video1: bigint[], video2: bigint[]): number{
     let minAvg = 100
     for (let offset = -3; offset < 3; offset ++){
         let currTotal = 0
+        if (((minLength) - Math.abs(offset)) <= 0) continue
+        if (minLength - 1 < Math.abs(offset)) continue
         for (let i = 0; i < minLength; i ++){
             if ((i + offset) < 0) continue
             if ((i + offset) >= minLength) continue
@@ -76,7 +98,7 @@ export function normalizeText(text: string): string{
     return text
     .toLowerCase()
     .replace(/https?:\/\/\S+/gi, "")
-    .replace(/[^\w\s]|_/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
     .replace(/\s+/g, " ")
     .trim()
 }
