@@ -6,7 +6,7 @@ import createFFmpegCore from '@ffmpeg/core'
 // the deployed bundle small; the cost moves to a one-time ~32MB download on
 // the first video decode per warm server instance.
 const WASM_URL =
-  'https://qtyvytpodaznfhffdzus.supabase.co/storage/v1/object/public/ffmpeg-core.wasm/ffmpeg-core.wasm'
+  'https://dejarepost-469294531807-us-east-2-an.s3.us-east-2.amazonaws.com/ffmpeg-core.wasm'
 
 let modulePromise: ReturnType<typeof createFFmpegCore> | null = null
 
@@ -61,7 +61,7 @@ export async function extractImage( image: Uint8Array, post_url: string ): Promi
   try{
     const exitCode = mod.exec(
       '-i', inFile,
-      '-vf', 'scale=9:8:flags=lanczos,format=gray',
+      '-vf', 'scale=17:16:flags=lanczos,format=gray',
       '-f', 'rawvideo',
       '-pix_fmt', 'gray',
       outputFile
@@ -97,7 +97,7 @@ export async function extractFrames(
     const exitCode = mod.exec(
       '-i', inFile,
       '-t', '30',
-      '-vf', `fps=${fps},scale=9:8:flags=lanczos,format=gray`,
+      '-vf', `fps=${fps},scale=17:16:flags=lanczos,format=gray`,
       '-f', 'rawvideo',
       '-pix_fmt', 'gray',
       outputFile
@@ -109,7 +109,7 @@ export async function extractFrames(
     let framesFile = mod.FS.readFile(outputFile)
     mod.FS.unlink(outputFile)
 
-    const frameSize = 9 * 8
+    const frameSize = 17 * 16
     let chunks: Uint8Array[] = []
     for (let i = 0; i < framesFile.length; i+= frameSize ){
       chunks.push(framesFile.subarray(i, i + frameSize))

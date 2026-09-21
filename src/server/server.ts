@@ -492,8 +492,7 @@ async function newPostSubmitted(reqMsg: IncomingMessage){
       redis_past_hash = await redis.get(`img${originalPost.id.toString()}`) ?? ''
       let hamming = 0
       if (redis_past_hash != ''){
-        Math.round(100 - (hamming / 64) * 100) / 100
-        hamming  = Math.round(100 - (hammingDistance(BigInt(redis_past_hash), image_hash) * 100)) / 100
+        hamming = Math.round((100 - (hammingDistance(BigInt(redis_past_hash), image_hash) / 256) * 100) * 100) / 100
         //hamming = Math.round(100 - ((hammingDistance(BigInt(redis_past_hash), image_hash) / 64) * 100))
       }
       let curr_title = post.title

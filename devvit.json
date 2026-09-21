@@ -15,7 +15,7 @@
   "permissions": {
     "http": {
       "enable": true,
-      "domains": ["v.redd.it", "i.redd.it", "qtyvytpodaznfhffdzus.supabase.co"]
+      "domains": ["v.redd.it", "i.redd.it", "qtyvytpodaznfhffdzus.supabase.co", "dejarepost-469294531807-us-east-2-an.s3.us-east-2.amazonaws.com"]
     }
   },
   "menu": {

@@ -10,10 +10,10 @@ export function reverseBits(sourceNumber: bigint, totalBitsToProcess: number): b
 
 export function mirrorFrameHash(sourceHash: bigint): bigint{
     let mirroredHash = 0n
-    for (let rowIndex = 0n; rowIndex < 8n; rowIndex++){
-        let rowBits = (sourceHash >> (rowIndex * 8n)) & 0xFFn
-        let mirroredRow = reverseBits(rowBits, 8) ^ 0xFFn
-        mirroredHash = mirroredHash | (mirroredRow << (rowIndex * 8n))
+    for (let rowIndex = 0n; rowIndex < 16n; rowIndex++){
+        let rowBits = (sourceHash >> (rowIndex * 16n)) & 0xFFFFn
+        let mirroredRow = reverseBits(rowBits, 16) ^ 0xFFFFn
+        mirroredHash = mirroredHash | (mirroredRow << (rowIndex * 16n))
     }
     return mirroredHash
 }
@@ -22,10 +22,10 @@ export function dHash(frame: Uint8Array): bigint{
     let hash = 0n
     let bit = 0n
     //frame is 9x8, so 8 comparisons per row
-    for (let row = 0; row < 8; row++){
-        for (let col = 0; col < 8; col++){
-            let left = frame[row * 9 + col]
-            let right = frame[row * 9 + col + 1]
+    for (let row = 0; row < 16; row++){
+        for (let col = 0; col < 16; col++){
+            let left = frame[row * 17 + col]
+            let right = frame[row * 17 + col + 1]
             if (left < right) hash |= 1n << bit
             bit ++
         }
@@ -69,7 +69,7 @@ export function compareVideo(video1: Uint8Array[], video2: Uint8Array[]): number
         let currAvg = currTotal / (minLength - Math.abs(i))
         if (currAvg < minAvg) minAvg = currAvg
     }
-    return Math.round((100 - (minAvg / 64)) * 100) / 100
+    return Math.round((100 - (minAvg / 256)) * 100) / 100
 }
 
 export function compareVideoHashes(video1: bigint[], video2: bigint[]): number{
@@ -91,7 +91,7 @@ export function compareVideoHashes(video1: bigint[], video2: bigint[]): number{
         let currAvg = currTotal / (minLength - Math.abs(offset)) 
         if (currAvg < minAvg) minAvg = currAvg
     }
-    return Math.round((100 - (minAvg / 64) * 100) * 100) / 100
+    return Math.round((100 - (minAvg / 256) * 100) * 100) / 100
 }
 
 export function normalizeText(text: string): string{
